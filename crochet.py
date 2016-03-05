@@ -174,4 +174,10 @@ class Pattern(object):
                 yield stitch
             node = node.nextNode
 
-        
+
+    def backwardIter(self):
+        node = self.lastStitch.head
+        while node:
+            for stitch in node.headOf:
+                yield stitch
+            node = node.prevNode
