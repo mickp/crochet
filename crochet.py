@@ -1,6 +1,8 @@
 import collections
 import operator
+import random
 from math import sin, cos
+
 
 """Stitch types:
     Class   English            US                 Length
@@ -63,28 +65,42 @@ class Vector(object):
 class Node(object):
     """A node where stitches meet."""
     def __init__(self, stitch, prevStitch):
+        ## Declarations
         # A list of stitches this node forms the head of.
         self.headOf= []
-        self.nextNode = None
-        if stitch:
-            self.headOf.append(stitch)
         # A list of stitches this node forms the root of.
         self.rootOf = []
         # The node preceding this node.
+        self.prevNode = None
+        # The node following this node.
+        self.nextNode = None
+        # The position of this node.
+        self.position = None
+        ## Initializations
+        if stitch:
+            self.headOf.append(stitch)
         if prevStitch is None:
             # This is the first stitch.
             self.prevNode = None
+            self.position = Vector(0., 0.)
         else:
             self.prevNode = prevStitch.head
             self.prevNode.nextNode = self
+            # Estimate the position.
+            if not self.prevNode.prevNode:
+                # There is only one preceding stitch
+                direction = Vector(1., 0.)
+            else:
+                direction = self.prevNode.position - self.prevNode.prevNode.position
+            self.position = self.prevNode.position + direction + Vector(*[random.uniform(0, 0.1) for i in [0,1]])
 
-        
+
 class Stitch(object):
     """A stitch."""
     # The stitch length.
     length = None
     # A stitch connecting one root to one head.
-    def __init__(self, into, prev, tog=False, dTheta=0):
+    def __init__(self, into, prev, tog=False):
         # A node that acts as a stitch's root.
         if isinstance(into, Stitch):
             self.root = into.head
@@ -109,9 +125,9 @@ class ChainStitch(Stitch):
     abbrev = 'CS'
     """A chain stitch."""
     length = 1
-    def __init__(self, prev=None, dTheta=0):
+    def __init__(self, prev=None):
         # The previous stitch and root are the same for a chain stitch.
-        super(ChainStitch, self).__init__(prev, prev, tog=False, dTheta=dTheta)
+        super(ChainStitch, self).__init__(prev, prev, tog=False)
 
 
 class SlipStitch(Stitch):
@@ -154,10 +170,11 @@ class Pattern(object):
         self.start = ChainStitch()
         self.lastStitch = self.start
         self.lastRoot = None
+        self.position = Vector(0.,0.)
 
 
-    def chain(self, dTheta=0):
-        self.lastStitch = ChainStitch(self.lastStitch, dTheta)
+    def chain(self):
+        self.lastStitch = ChainStitch(self.lastStitch)
         self.lastRoot = self.lastStitch.prev.head
 
 
@@ -173,7 +190,7 @@ class Pattern(object):
 
     def workIntoNext(self, stitchType, **kwargs):
         self.workInto(stitchType, self.lastRoot.nextNode)
-    
+
 
     def workIntoSame(self, stitchType, **kwargs):
         self.workInto(stitchType, self.lastRoot)
