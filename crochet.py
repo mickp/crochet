@@ -141,34 +141,6 @@ class DTRStitch(Stitch):
     abbrev = 'DTR'
 
 
-class Head(object):
-    # The head of one or more stitches.
-    def __init__(self, prev=None, width=1, dTheta=0):
-        # The previous head.
-        self.prev = prev
-        # The length of the head - usually 1, but can be 0 for slip stitch.
-        self.length = 1
-        # Stitches into this head.
-        self.stitches = []
-        # The width of the head.
-        self.width = width
-        # The orientation of the head.
-        self.theta = None
-        # The position of the head.
-        self.pos = (None, None)
-        if self.prev is None:
-            self.theta = dTheta
-            self.pos = (0.,0.)
-        else:
-            self.theta = prev.theta + dTheta
-            x, y = self.prev.pos
-            x += 0.5 * self.prev.width * cos(self.prev.theta)
-            y -= 0.5 * self.prev.width * sin(self.prev.theta)
-            x += 0.5 * self.width * cos(self.theta)
-            y -= 0.5 * self.width * sin(self.theta)
-            self.pos = (x, y)
-
-
 class Pattern(object):
     def __init__(self):
         self.start = ChainStitch()
