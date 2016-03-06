@@ -1,8 +1,15 @@
 import collections
+import numpy as np
 import operator
 import random
+import glUtil
+import OpenGL.GL as gl
+import OpenGL.arrays.vbo as glvbo
+import scipy.optimize as opt
+from PyQt4 import QtGui, QtCore
 from math import sin, cos
 
+F_FACTOR = 0.9
 
 """Stitch types:
     Class   English            US                 Length
@@ -16,16 +23,26 @@ from math import sin, cos
 
 def test():
     p = Pattern()
-    nStitches = 5
-    nRows = 4
-    for i in xrange(nStitches):
+    nChains = 6
+    nStitches = 12
+    for i in xrange(nChains):
         p.chain()
-    for r in xrange(nRows-1):
-        for ch in xrange(2):
+    p.workInto(SlipStitch, p.firstStitch)
+    mult = 1
+    for i in xrange(nStitches):
+        if i > 0 and i % nChains == 0:
+            into = p.lastStitch
+            for j in xrange(nChains-1):
+                into = into.prev
+            p.workInto(SlipStitch, into)
             p.chain()
-            p.workInto(DCStitch, p.lastStitch.prev.prev.prev)
-        for st in xrange(nStitches-1):
+            p.workInto(DCStitch, into)
+            mult *= 2
+        else:
             p.workIntoNext(DCStitch)
+            for m in xrange(mult-1):
+                p.workIntoNext(DCStitch, tog=True)
+
     return p
 
 
@@ -34,6 +51,11 @@ class Vector(object):
         self.x = x
         self.y = y
         self.pos = (x, y)
+
+
+    def unit(self):
+        l = abs(self)
+        return self / l
 
 
     def __arithmetic__(self, op, operand):
@@ -58,6 +80,10 @@ class Vector(object):
 
     def __add__(self, operand):
         return self.__arithmetic__(operator.__add__, operand)
+
+    
+    def __div__(self, operand):
+        return self.__arithmetic__(operator.__div__, operand)
 
 
     def __mul__(self, operand):
@@ -104,9 +130,13 @@ class Node(object):
             if not self.prevNode.prevNode:
                 # There is only one preceding stitch
                 direction = Vector(1., 0.)
+            elif self.prevNode == stitch.root:
+                # This node was created by a chain stitch.
+                direction = (self.prevNode.prevNode.position - self.prevNode.position).unit()
             else:
-                direction = self.prevNode.position - self.prevNode.prevNode.position
-            self.position = self.prevNode.position + direction + Vector(*[random.uniform(0, 0.1) for i in [0,1]])
+                direction = (self.prevNode.prevNode.position - self.prevNode.position).unit()
+                # Do something with the root node?
+            self.position = self.prevNode.position + direction# + Vector(*[random.uniform(-0.01, 0.01) for i in [0,1]])
 
 
     def force(self):
@@ -115,11 +145,17 @@ class Node(object):
         neighbours.discard(None)
         for n in neighbours:
             delta = self.position - n.position
-            force += delta * (1 - abs(delta))
+            if abs(delta) > 0:
+                force += delta.unit() * (1 - abs(delta))
         for s in self.headOf + self.rootOf:
             if s.root:
                 delta = self.position - s.root.position
-                force += delta * (1. - abs(delta) / s.length)
+                if abs(delta) > 0:
+                    force += delta.unit() * (1 - (abs(delta) / s.length))
+        # Noise
+        force += Vector(*[random.uniform(-0.001, 0.001) for i in [0,1]])
+        # Inflation
+        force += self.position * 0.001
         return force
 
 
@@ -135,11 +171,10 @@ class Stitch(object):
         elif isinstance(into, Node):
             self.root = into
         elif into is None:
-            self.root = None
+            self.root = Node(self, None)
         else:
-            raise Exception("2nd argument must be instance of Node or Stitch.")
-        if self.root:
-            self.root.rootOf.append(self)
+            raise Exception("2nd argument must be instance of Node or Stitch, not %s." % type(prev))
+        self.root.rootOf.append(self)
         # Previous stitch
         self.prev = prev
         if tog:
@@ -159,7 +194,7 @@ class ChainStitch(Stitch):
 
 
 class SlipStitch(Stitch):
-    length = 0
+    length = 1
     abbrev = 'SS'
 
 
@@ -195,8 +230,8 @@ class DTRStitch(Stitch):
 
 class Pattern(object):
     def __init__(self):
-        self.start = ChainStitch()
-        self.lastStitch = self.start
+        self.firstStitch = ChainStitch()
+        self.lastStitch = self.firstStitch
         self.lastRoot = None
         self.position = Vector(0.,0.)
 
@@ -212,7 +247,7 @@ class Pattern(object):
         elif isinstance(nodeOrStitch, Node):
             self.lastRoot = nodeOrStitch
         else:
-            raise Exception('2nd argument must be a node or stitch.')
+            raise Exception('2nd argument must be a node or stitch, not %s.' % type(nodeOrStitch))
         self.lastStitch = stitchType(self.lastRoot, self.lastStitch, **kwargs)
 
 
@@ -226,15 +261,15 @@ class Pattern(object):
 
     def getAllNodes(self):
         nodes = set()
-        stitch = self.lastStitch
-        while stitch:
-            nodes.add(stitch.head)
-            stitch = stitch.prev
+        node = self.firstStitch.head
+        while node:
+            nodes.add(node)
+            node = node.nextNode
         return nodes
 
 
     def forwardIter(self):
-        node = self.start.head
+        node = self.firstStitch.head
         while node:
             for stitch in node.headOf:
                 yield stitch
@@ -247,3 +282,110 @@ class Pattern(object):
             for stitch in node.headOf:
                 yield stitch
             node = node.prevNode
+
+
+    def relax(self):
+        for i in xrange(10):
+            for node in self.getAllNodes():
+                node.position += node.force() * F_FACTOR
+
+
+    def energy(self, positions=None):
+        energy = 0
+        nodes = self.getAllNodes()
+        if positions is not None:
+            for node, position in zip(nodes, positions):
+                node.position = Vector(*position)
+        for node in nodes:
+            energy += abs(node.force())**2
+        return energy
+
+
+    def energyOpt(self, positionsAsVector):
+        positions = positionsAsVector.reshape((-1, 2))
+        return self.energy(positions)
+
+
+    def optimize(self):
+        positions = np.array([[node.position.x, node.position.y] for node in self.getAllNodes()])
+        bounds = [[0,0], [0,0]] + [[None,None]] * 2*(len(positions)-1)
+        opt.minimize(self.energyOpt, positions.ravel(),
+                  method='L-BFGS-B',
+                  bounds=bounds,
+                  callback=self.updateDisplay)
+
+
+    def updateDisplay(self, *args):
+        if hasattr(self, 'widget'):
+            self.widget.updateGL()
+
+
+class MyGLPlotWidget(glUtil.GLPlotWidget):
+    def __init__(self, *args, **kwargs):
+        super(MyGLPlotWidget, self).__init__(*args, **kwargs)
+        self.pattern = test()
+        self.scale = 1/100.
+
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        handled = True
+        if key in (QtCore.Qt.Key_Plus,):
+            self.scale *= 2.
+        elif key in (QtCore.Qt.Key_Minus,):
+            self.scale *= .5
+        elif key in (QtCore.Qt.Key_O, ):
+            self.pattern.widget = self
+            self.pattern.optimize()
+        else:
+            self.pattern.relax()
+
+        if handled:
+            self.updateGL()
+        else:
+            event.ignore()
+
+
+    def initializeGL(self):
+        """Initialize OpenGL, VBOs, upload data on the GPU, etc."""
+        # background color
+        gl.glClearColor(0, 0, 0, 0)
+
+
+    def paintGL(self):
+        scale = self.scale
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        gl.glBegin(gl.GL_POINTS)
+        gl.glColor3f(1,1,1)
+        for node in self.pattern.getAllNodes():
+            gl.glVertex2f(*(node.position * scale).pos)
+        gl.glEnd()
+
+        gl.glBegin(gl.GL_LINES)
+        for stitch in self.pattern.forwardIter():
+            gl.glColor3f(0,0,1)
+            gl.glVertex2f(*(stitch.root.position * scale).pos)
+            gl.glVertex2f(*(stitch.head.position * scale).pos)
+            gl.glColor3f(1, 0, 0)
+            if stitch.prev:
+                gl.glVertex2f(*(stitch.head.position * scale).pos)
+                gl.glVertex2f(*(stitch.prev.head.position * scale).pos)
+        gl.glEnd()
+
+
+
+if __name__ == '__main__':
+    import sys
+    # define a Qt window with an OpenGL widget inside it
+    class CrochetWindow(QtGui.QMainWindow):
+        def __init__(self):
+            super(CrochetWindow, self).__init__()
+            # initialize the GL widget
+            self.widget = MyGLPlotWidget()
+            # put the window at the screen position (100, 100)
+            self.setGeometry(100, 100, self.widget.width, self.widget.height)
+            self.setCentralWidget(self.widget)
+            self.show()
+
+    # show the window
+    win = glUtil.create_window(CrochetWindow)
