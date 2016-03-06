@@ -14,6 +14,20 @@ from math import sin, cos
     DTR     triple treble      double treble      5
 """
 
+def test():
+    p = Pattern()
+    nStitches = 5
+    nRows = 4
+    for i in xrange(nStitches):
+        p.chain()
+    for r in xrange(nRows-1):
+        for ch in xrange(2):
+            p.chain()
+            p.workInto(DCStitch, p.lastStitch.prev.prev.prev)
+        for st in xrange(nStitches-1):
+            p.workIntoNext(DCStitch)
+    return p
+
 
 class Vector(object):
     def __init__(self, x, y):
