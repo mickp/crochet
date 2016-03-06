@@ -44,6 +44,10 @@ class Vector(object):
         return self.__arithmetic__(operator.__add__, operand)
 
 
+    def __mul__(self, operand):
+        return self.__arithmetic__(operator.__mul__, operand)
+
+
     def __sub__(self, operand):
         return self.__arithmetic__(operator.__sub__, operand)
 
