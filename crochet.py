@@ -56,6 +56,10 @@ class Vector(object):
         return u'Vector: (%f, %f).' % self.pos
 
 
+    def __abs__(self):
+        return (self.x**2 + self.y**2)**0.5
+
+
 class Node(object):
     """A node where stitches meet."""
     def __init__(self, stitch, prevStitch):
