@@ -95,6 +95,20 @@ class Node(object):
             self.position = self.prevNode.position + direction + Vector(*[random.uniform(0, 0.1) for i in [0,1]])
 
 
+    def force(self):
+        force = Vector(0.,0.)
+        neighbours = set((self.prevNode, self.nextNode))
+        neighbours.discard(None)
+        for n in neighbours:
+            delta = self.position - n.position
+            force += delta * (1 - abs(delta))
+        for s in self.headOf + self.rootOf:
+            if s.root:
+                delta = self.position - s.root.position
+                force += delta * (1. - abs(delta) / s.length)
+        return force
+
+
 class Stitch(object):
     """A stitch."""
     # The stitch length.
