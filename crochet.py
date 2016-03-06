@@ -1,3 +1,5 @@
+import collections
+import operator
 from math import sin, cos
 
 """Stitch types:
@@ -9,6 +11,45 @@ from math import sin, cos
     TR      double treble      treble             4
     DTR     triple treble      double treble      5
 """
+
+
+class Vector(object):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.pos = (x, y)
+
+
+    def __arithmetic__(self, op, operand):
+        if isinstance(operand, Vector):
+            # Add Vector to Vector
+            x1 = operand.x
+            y1 = operand.y
+        elif isinstance(operand, collections.Iterable):
+            # Add tuple or list to Vector
+            if len(operand) != 2:
+                raise Exception("__add__ operand must be Vector, scalar or 2-element container.")
+            x1 = operand[0]
+            y1 = operand[1]
+        else:
+            # Add scalar to Vector.
+            x1 = operand
+            y1 = operand
+        x = op(self.x, x1)
+        y = op(self.y, y1)
+        return Vector(x, y)
+
+
+    def __add__(self, operand):
+        return self.__arithmetic__(operator.__add__, operand)
+
+
+    def __sub__(self, operand):
+        return self.__arithmetic__(operator.__sub__, operand)
+
+
+    def __repr__(self):
+        return u'Vector: (%f, %f).' % self.pos
 
 
 class Node(object):
