@@ -324,16 +324,30 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
     def __init__(self, *args, **kwargs):
         super(MyGLPlotWidget, self).__init__(*args, **kwargs)
         self.pattern = test()
-        self.scale = 1/100.
 
 
     def keyPressEvent(self, event):
         key = event.key()
         handled = True
+
+        directions = {QtCore.Qt.Key_Left: (-1, 0., 0.),
+                      QtCore.Qt.Key_Right: (1, 0., 0.),
+                      QtCore.Qt.Key_Up: (0, 1, 0.),
+                      QtCore.Qt.Key_Down: (0, -1, 0.),}
+
         if key in (QtCore.Qt.Key_Plus,):
-            self.scale *= 2.
+            gl.glMatrixMode(gl.GL_MODELVIEW)
+            gl.glScalef(2.,2., 2.)
         elif key in (QtCore.Qt.Key_Minus,):
-            self.scale *= .5
+            gl.glMatrixMode(gl.GL_MODELVIEW)
+            gl.glScalef(.5, .5, .5)
+            pass
+        elif key in (directions):
+            gl.glMatrixMode(gl.GL_MODELVIEW)
+            modelview = gl.glGetFloatv(gl.GL_MODELVIEW_MATRIX)
+            translate = directions[key] / modelview.diagonal()[0:-1]
+            translate *= 0.8
+            gl.glTranslatef(*translate)
         elif key in (QtCore.Qt.Key_O, ):
             self.pattern.widget = self
             self.pattern.optimize()
@@ -353,23 +367,22 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
 
 
     def paintGL(self):
-        scale = self.scale
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
         gl.glBegin(gl.GL_POINTS)
         gl.glColor3f(1,1,1)
         for node in self.pattern.getAllNodes():
-            gl.glVertex2f(*(node.position * scale).pos)
+            gl.glVertex2f(*(node.position).pos)
         gl.glEnd()
 
         gl.glBegin(gl.GL_LINES)
         for stitch in self.pattern.forwardIter():
             gl.glColor3f(0,0,1)
-            gl.glVertex2f(*(stitch.root.position * scale).pos)
-            gl.glVertex2f(*(stitch.head.position * scale).pos)
+            gl.glVertex2f(*(stitch.root.position).pos)
+            gl.glVertex2f(*(stitch.head.position).pos)
             gl.glColor3f(1, 0, 0)
             if stitch.prev:
-                gl.glVertex2f(*(stitch.head.position * scale).pos)
-                gl.glVertex2f(*(stitch.prev.head.position * scale).pos)
+                gl.glVertex2f(*(stitch.head.position).pos)
+                gl.glVertex2f(*(stitch.prev.head.position).pos)
         gl.glEnd()
 
 
