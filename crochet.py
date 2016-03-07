@@ -24,24 +24,29 @@ F_FACTOR = 0.9
 def test():
     p = Pattern()
     nChains = 6
-    nRounds = 1
+    nRounds = 2
     for i in xrange(nChains):
         p.chain()
-    mult = 1
+    mult = 2
+    p.workInto(SlipStitch, 0)
+    start = p.lastWorked    
+    p.chain()
+    p.chain()
+    joinAt = p.lastWorked
+    
     for i in xrange(nRounds):
-        into = p.lastWorked
-        for j in xrange(mult*nChains-1):
-            into = into-1
-        print into
-        p.workInto(SlipStitch, into)
-        p.chain()
-        for j in xrange(nChains - 1):
+        for j in xrange((mult-1) * nChains):
             if j == 0:
-                p.workInto(DCStitch, into)
+                p.workInto(DCStitch, start)
             else:
                 p.workIntoNext(DCStitch)
             for m in xrange(mult-1):
                 p.workIntoSame(DCStitch)
+        p.workInto(SlipStitch, joinAt)
+        start = p.lastWorked
+        p.chain()
+        p.chain()
+        joinAt = p.lastWorked
         mult *= 2
 
     return p
@@ -106,7 +111,7 @@ class Vector(object):
 
 class Node(object):
     """A node where stitches meet."""
-    def __init__(self, position, prevNode=None):
+    def __init__(self, position=None, prevNode=None):
         ## Declarations
         # A list of stitches this node forms the head of.
         self.headOf= set()
@@ -122,6 +127,24 @@ class Node(object):
             self.adjoins.append(prevNode)
             prevNode.adjoins.append(self)
         self.mobile = True
+        self.active = False
+
+
+    def activate(self):
+        self.active = True
+        self.position = self.guessPosition()
+
+
+    def guessPosition(self):
+        position = Vector(0,0)
+        js = [j for j in self.adjoins if j.active]    
+        if len(js) == 1:
+            position = js[0].position + Vector(*[random.uniform(-1, 1) for i in [0,1]])
+        elif len(js) > 1:
+            for j in js:
+                position += j.position
+            position /= len(js)
+        return position
 
 
     def join(self, other):
@@ -162,6 +185,7 @@ class Stitch(object):
             raise Exception("2nd argument must be instance of Node or Stitch, not %s." % type(prev))
         self.root.rootOf.add(self)
         self.head = head
+        self.head.headOf.add(self)
 
 
 class ChainStitch(Stitch):
@@ -223,18 +247,27 @@ class Pattern(object):
         # The last worked node index.
         self.lastWorked = 0
         self.hookAt = 0
-        self.nodes.append(Node(Vector(0,0), None))
+        self.numActive = 2
+        self.addNode()
         self.nodes[0].mobile = False
 
 
     def addNode(self):
-        if len(self.nodes[-1].adjoins) == 0:
+        if len(self.nodes) == 0:
+            # This is the first node.
+            node = Node()
+        elif len(self.nodes[-1].adjoins) == 0:
             # There is only one preceding node.
             direction = Vector(1., 0.)
+            position = self.nodes[-1].position + direction
+            node = Node(position, self.nodes[-1])       
         else:
             direction = (self.nodes[-1].position - self.nodes[-1].adjoins[0].position).unit()
-        position = self.nodes[-1].position + direction
-        self.nodes.append(Node(position, self.nodes[-1]))
+            position = self.nodes[-1].position + direction
+            node = Node(position, self.nodes[-1])       
+        self.nodes.append(node)
+        if len(self.nodes) <= self.numActive:
+            node.activate()
         return self.nodes[-1]
 
 
@@ -267,18 +300,52 @@ class Pattern(object):
 
 
     def relax(self):
-        for node in self.nodes:
+        for node in self.nodes[0:self.numActive]:
             if not node.mobile:
                 continue
-            specific = node.force()
+            ## Non-specific forces
             nonSpecific = Vector(0, 0)
-            others = set(self.nodes)
+            others = set(self.nodes[0:self.numActive])
             others.discard(node)
             for other in others:
                 delta = node.position - other.position
-                nonSpecific += delta.unit() * (1 /  abs(delta)**2) * .001
+                if abs(delta) > 0:
+                    nonSpecific += delta.unit() * (1 /  abs(delta)**2) * .01
                 nonSpecific += Vector(*[random.uniform(-0.01, 0.01) for i in [0,1]])
-            node.position += (specific + nonSpecific) * F_FACTOR
+            ## Specific forces       
+            specific = Vector(0.,0.)
+            # From adjoining nodes.
+            for j in node.adjoins:
+                if not j.active:
+                    continue
+                delta = node.position - j.position
+                if abs(delta) > 0:
+                    specific += delta.unit() * (1 - abs(delta)) * 0.01
+            # From stitches.
+            for s in node.headOf:
+                if s.root:
+                    if s.root.active:
+                        delta = node.position - s.root.position
+                        if abs(delta) > 0:
+                            specific += (delta.unit() * (1 - (abs(delta) / s.length))**2 ) / -100
+            node.position += (nonSpecific + specific) * F_FACTOR
+
+
+    def forward(self, n=1):
+        upper = min(len(self.nodes), self.numActive+n)
+        for node in self.nodes[self.numActive:upper]:
+            #node.activate()
+            node.active = True
+            pos = node.guessPosition()
+            node.position = node.guessPosition()
+        self.numActive = upper
+
+
+    def backward(self, n=1):
+        lower = max(0, self.numActive-n)
+        for node in self.nodes[lower:self.numActive]:
+            node.active = False
+        self.numActive = lower
 
 
     def energy(self, positions=None):
@@ -342,6 +409,12 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
         elif key in (QtCore.Qt.Key_O, ):
             self.pattern.widget = self
             self.pattern.optimize()
+        elif key in (QtCore.Qt.Key_Greater, QtCore.Qt.Key_N):
+            self.pattern.forward(1)
+        elif key in (QtCore.Qt.Key_Less, QtCore.Qt.Key_P):
+            self.pattern.backward(1)
+        elif key in (QtCore.Qt.Key_R,):
+            pass
         else:
             self.pattern.relax()
 
@@ -365,26 +438,32 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
         gl.glBegin(gl.GL_POINTS)
         gl.glVertex2f(*node.position.pos)
         gl.glEnd()
-        gl.glPointSize(2.)
+        gl.glPointSize(4.)
         r = 0.1
-        gl.glLineWidth(4)
+        gl.glLineWidth(3)
         for node in self.pattern.nodes:
-            gl.glBegin(gl.GL_POINTS)
-            gl.glColor3f(1,1,1)
-            gl.glVertex2f(*node.position.pos)
-            gl.glEnd()
+            if not node.active:
+                continue
             gl.glBegin(gl.GL_LINES)
             for other in set(node.adjoins):
+                if not other.active:
+                    continue
                 gl.glColor3f(r, 0, 0)
                 gl.glVertex2f(*node.position.pos)
                 gl.glVertex2f(*other.position.pos)
                 r *= 1.1
+            gl.glEnd()
+            gl.glColor3f(1,1,1)
+            gl.glBegin(gl.GL_POINTS)
+            gl.glVertex2f(*node.position.pos)
             gl.glEnd()
         gl.glLineWidth(2)
         gl.glBegin(gl.GL_LINES)
         for stitch in self.pattern.stitches:
             gl.glColor3f(0,0,1)
             if stitch.root and stitch.head:
+                if not (stitch.root.active and stitch.head.active):
+                    continue
                 gl.glVertex2f(*stitch.root.position.pos)
                 gl.glVertex2f(*stitch.head.position.pos)
             gl.glColor3f(1, 0, 0)
