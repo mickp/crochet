@@ -24,24 +24,25 @@ F_FACTOR = 0.9
 def test():
     p = Pattern()
     nChains = 6
-    nStitches = 12
+    nRounds = 0
     for i in xrange(nChains):
         p.chain()
-    p.workInto(SlipStitch, p.firstStitch)
+    p.workInto(SlipStitch, 0)
     mult = 1
-    for i in xrange(nStitches):
-        if i > 0 and i % nChains == 0:
-            into = p.lastStitch
-            for j in xrange(nChains-1):
-                into = into.prev
-            p.workInto(SlipStitch, into)
-            p.chain()
-            p.workInto(DCStitch, into)
-            mult *= 2
-        else:
-            p.workIntoNext(DCStitch)
+    for i in xrange(nRounds):
+        into = p.lastWorked
+        for j in xrange(nChains-1):
+            into = into-1
+        p.workInto(SlipStitch, into)
+        p.chain()
+        for j in xrange(nChains - 1):
+            if j == 0:
+                p.workInto(DCStitch, into)
+            else:
+                p.workIntoNext(DCStitch)
             for m in xrange(mult-1):
-                p.workIntoNext(DCStitch, tog=True)
+                p.workIntoSame(DCStitch)
+        mult *= 2
 
     return p
 
@@ -102,60 +103,49 @@ class Vector(object):
         return (self.x**2 + self.y**2)**0.5
 
 
+
 class Node(object):
     """A node where stitches meet."""
-    def __init__(self, stitch, prevStitch):
+    def __init__(self, position, prevNode=None):
         ## Declarations
         # A list of stitches this node forms the head of.
-        self.headOf= []
+        self.headOf= set()
         # A list of stitches this node forms the root of.
-        self.rootOf = []
-        # The node preceding this node.
-        self.prevNode = None
-        # The node following this node.
-        self.nextNode = None
+        self.rootOf = set()
         # The position of this node.
         self.position = None
+        # Links to other nodes.
+        self.adjoins = []
         ## Initializations
-        if stitch:
-            self.headOf.append(stitch)
-        if prevStitch is None:
-            # This is the first stitch.
-            self.prevNode = None
-            self.position = Vector(0., 0.)
-        else:
-            self.prevNode = prevStitch.head
-            self.prevNode.nextNode = self
-            # Estimate the position.
-            if not self.prevNode.prevNode:
-                # There is only one preceding stitch
-                direction = Vector(1., 0.)
-            elif self.prevNode == stitch.root:
-                # This node was created by a chain stitch.
-                direction = (self.prevNode.prevNode.position - self.prevNode.position).unit()
-            else:
-                direction = (self.prevNode.prevNode.position - self.prevNode.position).unit()
-                # Do something with the root node?
-            self.position = self.prevNode.position + direction# + Vector(*[random.uniform(-0.01, 0.01) for i in [0,1]])
+        self.position = position
+        if prevNode:
+            self.adjoins.append(prevNode)
+            prevNode.adjoins.append(self)
+        self.mobile = True
+
+
+    def join(self, other):
+        self.adjoins.append(other)
+        other.adjoins.append(self)
 
 
     def force(self):
         force = Vector(0.,0.)
-        neighbours = set((self.prevNode, self.nextNode))
-        neighbours.discard(None)
-        for n in neighbours:
-            delta = self.position - n.position
+        if not self.mobile:
+            return force
+        for j in self.adjoins:
+            delta = self.position - j.position
             if abs(delta) > 0:
                 force += delta.unit() * (1 - abs(delta))
-        for s in self.headOf + self.rootOf:
+        for s in self.headOf.union(self.rootOf):
             if s.root:
                 delta = self.position - s.root.position
                 if abs(delta) > 0:
                     force += delta.unit() * (1 - (abs(delta) / s.length))
         # Noise
-        force += Vector(*[random.uniform(-0.001, 0.001) for i in [0,1]])
+        force += Vector(*[random.uniform(-0.1, 0.1) for i in [0,1]])
         # Inflation
-        force += self.position * 0.001
+        #force += self.position * 0.0001
         return force
 
 
@@ -164,23 +154,16 @@ class Stitch(object):
     # The stitch length.
     length = None
     # A stitch connecting one root to one head.
-    def __init__(self, into, prev, tog=False):
+    def __init__(self, into, head):
         # A node that acts as a stitch's root.
         if isinstance(into, Stitch):
             self.root = into.head
         elif isinstance(into, Node):
             self.root = into
-        elif into is None:
-            self.root = Node(self, None)
         else:
             raise Exception("2nd argument must be instance of Node or Stitch, not %s." % type(prev))
-        self.root.rootOf.append(self)
-        # Previous stitch
-        self.prev = prev
-        if tog:
-            self.head = prev.head
-        else:
-            self.head = Node(self, prev)
+        self.root.rootOf.add(self)
+        self.head = head
 
 
 class ChainStitch(Stitch):
@@ -188,10 +171,7 @@ class ChainStitch(Stitch):
     abbrev = 'CS'
     """A chain stitch."""
     length = 1
-    def __init__(self, prev=None):
-        # The previous stitch and root are the same for a chain stitch.
-        super(ChainStitch, self).__init__(prev, prev, tog=False)
-
+    
 
 class SlipStitch(Stitch):
     length = 1
@@ -230,69 +210,67 @@ class DTRStitch(Stitch):
 
 class Pattern(object):
     def __init__(self):
-        self.firstStitch = ChainStitch()
-        self.lastStitch = self.firstStitch
-        self.lastRoot = None
-        self.position = Vector(0.,0.)
+        # A list of all stitches.
+        self.stitches = []
+        # A list of all nodes.
+        self.nodes = []
+        # The current propagation direction: forward (1) or backward (-1).
+        self.direction = 1
+        # The last worked node index.
+        self.lastWorked = 0
+        self.hookAt = 0
+        self.nodes.append(Node(Vector(0,0), None))
+        self.nodes[0].mobile = False
+
+  
+    def addNode(self):
+        if len(self.nodes[-1].adjoins) == 0:
+            # There is only one preceding node.
+            direction = Vector(1., 0.)
+        else:
+            direction = (self.nodes[-1].position - self.nodes[-1].adjoins[0].position).unit()
+        position = self.nodes[-1].position + direction
+        self.nodes.append(Node(position, self.nodes[-1]))
+        return self.nodes[-1]
 
 
     def chain(self):
-        self.lastStitch = ChainStitch(self.lastStitch)
-        self.lastRoot = self.lastStitch.prev.head
+        self.stitches.append(ChainStitch(self.nodes[-1], self.addNode()))
+        self.lastWorked = len(self.nodes) - 2
+        self.hookAt = len(self.nodes) - 1
 
 
-    def workInto(self, stitchType, nodeOrStitch, **kwargs):
-        if isinstance(nodeOrStitch, Stitch):
-            self.lastRoot = nodeOrStitch.head
-        elif isinstance(nodeOrStitch, Node):
-            self.lastRoot = nodeOrStitch
-        else:
-            raise Exception('2nd argument must be a node or stitch, not %s.' % type(nodeOrStitch))
-        self.lastStitch = stitchType(self.lastRoot, self.lastStitch, **kwargs)
+    def workInto(self, stitchType, nodeIndex, tog=False, **kwargs):
+        if not tog:
+            self.addNode()
+            self.hookAt = len(self.nodes)
+        self.stitches.append(stitchType(self.nodes[nodeIndex], self.nodes[-1]), **kwargs)
+        self.lastWorked = nodeIndex
+        if stitchType is SlipStitch:
+            print 'SS'
+            self.nodes[-1].join(self.nodes[self.lastWorked])
 
 
     def workIntoNext(self, stitchType, **kwargs):
-        self.workInto(stitchType, self.lastRoot.nextNode)
+        self.workInto(stitchType, self.lastWorked + self.direction)
 
 
     def workIntoSame(self, stitchType, **kwargs):
-        self.workInto(stitchType, self.lastRoot)
+        self.workInto(stitchType, self.lastWorked)
 
 
-    def getAllNodes(self):
-        nodes = set()
-        node = self.firstStitch.head
-        while node:
-            nodes.add(node)
-            node = node.nextNode
-        return nodes
-
-
-    def forwardIter(self):
-        node = self.firstStitch.head
-        while node:
-            for stitch in node.headOf:
-                yield stitch
-            node = node.nextNode
-
-
-    def backwardIter(self):
-        node = self.lastStitch.head
-        while node:
-            for stitch in node.headOf:
-                yield stitch
-            node = node.prevNode
-
+    def turn(self):
+        self.direction *= -1
 
     def relax(self):
         for i in xrange(10):
-            for node in self.getAllNodes():
+            for node in self.nodes:
                 node.position += node.force() * F_FACTOR
 
 
     def energy(self, positions=None):
         energy = 0
-        nodes = self.getAllNodes()
+        nodes = self.nodes
         if positions is not None:
             for node, position in zip(nodes, positions):
                 node.position = Vector(*position)
@@ -307,7 +285,7 @@ class Pattern(object):
 
 
     def optimize(self):
-        positions = np.array([[node.position.x, node.position.y] for node in self.getAllNodes()])
+        positions = np.array([[node.position.x, node.position.y] for node in self.nodes])
         bounds = [[0,0], [0,0]] + [[None,None]] * 2*(len(positions)-1)
         opt.minimize(self.energyOpt, positions.ravel(),
                   method='L-BFGS-B',
@@ -368,23 +346,25 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
 
     def paintGL(self):
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-        gl.glBegin(gl.GL_POINTS)
-        gl.glColor3f(1,1,1)
-        for node in self.pattern.getAllNodes():
-            gl.glVertex2f(*(node.position).pos)
-        gl.glEnd()
-
-        gl.glBegin(gl.GL_LINES)
-        for stitch in self.pattern.forwardIter():
-            gl.glColor3f(0,0,1)
-            gl.glVertex2f(*(stitch.root.position).pos)
-            gl.glVertex2f(*(stitch.head.position).pos)
+        for node in self.pattern.nodes:
+            gl.glBegin(gl.GL_POINTS)
+            gl.glColor3f(1,1,1)
+            gl.glVertex2f(*node.position.pos)
+            gl.glEnd()
+            gl.glBegin(gl.GL_LINES)
             gl.glColor3f(1, 0, 0)
-            if stitch.prev:
-                gl.glVertex2f(*(stitch.head.position).pos)
-                gl.glVertex2f(*(stitch.prev.head.position).pos)
+            for other in set(node.adjoins):
+                gl.glVertex2f(*node.position.pos)
+                gl.glVertex2f(*other.position.pos)
+            gl.glEnd()
+        
+        gl.glBegin(gl.GL_LINES)
+        for stitch in self.pattern.stitches:
+            gl.glColor3f(0,0,1)
+            gl.glVertex2f(*stitch.root.position.pos)
+            gl.glVertex2f(*stitch.head.position.pos)
+            gl.glColor3f(1, 0, 0)
         gl.glEnd()
-
 
 
 if __name__ == '__main__':
