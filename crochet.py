@@ -24,15 +24,15 @@ F_FACTOR = 0.9
 def test():
     p = Pattern()
     nChains = 6
-    nRounds = 0
+    nRounds = 1
     for i in xrange(nChains):
         p.chain()
-    p.workInto(SlipStitch, 0)
     mult = 1
     for i in xrange(nRounds):
         into = p.lastWorked
-        for j in xrange(nChains-1):
+        for j in xrange(mult*nChains-1):
             into = into-1
+        print into
         p.workInto(SlipStitch, into)
         p.chain()
         for j in xrange(nChains - 1):
@@ -82,7 +82,7 @@ class Vector(object):
     def __add__(self, operand):
         return self.__arithmetic__(operator.__add__, operand)
 
-    
+
     def __div__(self, operand):
         return self.__arithmetic__(operator.__div__, operand)
 
@@ -141,9 +141,7 @@ class Node(object):
             if s.root:
                 delta = self.position - s.root.position
                 if abs(delta) > 0:
-                    force += delta.unit() * (1 - (abs(delta) / s.length))
-        # Noise
-        force += Vector(*[random.uniform(-0.1, 0.1) for i in [0,1]])
+                    force += delta.unit() * (1 - (abs(delta) / s.length))**2
         # Inflation
         #force += self.position * 0.0001
         return force
@@ -171,11 +169,17 @@ class ChainStitch(Stitch):
     abbrev = 'CS'
     """A chain stitch."""
     length = 1
-    
+    def __init__(self, head):
+        self.head = head
+        self.root = None
+
 
 class SlipStitch(Stitch):
     length = 1
     abbrev = 'SS'
+    def __init__(self, into, head):
+        self.head = head
+        self.root = None
 
 
 class SCStitch(Stitch):
@@ -222,7 +226,7 @@ class Pattern(object):
         self.nodes.append(Node(Vector(0,0), None))
         self.nodes[0].mobile = False
 
-  
+
     def addNode(self):
         if len(self.nodes[-1].adjoins) == 0:
             # There is only one preceding node.
@@ -235,20 +239,19 @@ class Pattern(object):
 
 
     def chain(self):
-        self.stitches.append(ChainStitch(self.nodes[-1], self.addNode()))
-        self.lastWorked = len(self.nodes) - 2
+        self.lastWorked = len(self.nodes) - 1
+        self.stitches.append(ChainStitch(self.addNode()))
         self.hookAt = len(self.nodes) - 1
 
 
     def workInto(self, stitchType, nodeIndex, tog=False, **kwargs):
-        if not tog:
+        if stitchType is SlipStitch:
+            self.nodes[-1].join(self.nodes[nodeIndex])
+        elif not tog:
             self.addNode()
             self.hookAt = len(self.nodes)
         self.stitches.append(stitchType(self.nodes[nodeIndex], self.nodes[-1]), **kwargs)
         self.lastWorked = nodeIndex
-        if stitchType is SlipStitch:
-            print 'SS'
-            self.nodes[-1].join(self.nodes[self.lastWorked])
 
 
     def workIntoNext(self, stitchType, **kwargs):
@@ -262,10 +265,20 @@ class Pattern(object):
     def turn(self):
         self.direction *= -1
 
+
     def relax(self):
-        for i in xrange(10):
-            for node in self.nodes:
-                node.position += node.force() * F_FACTOR
+        for node in self.nodes:
+            if not node.mobile:
+                continue
+            specific = node.force()
+            nonSpecific = Vector(0, 0)
+            others = set(self.nodes)
+            others.discard(node)
+            for other in others:
+                delta = node.position - other.position
+                nonSpecific += delta.unit() * (1 /  abs(delta)**2) * .001
+                nonSpecific += Vector(*[random.uniform(-0.01, 0.01) for i in [0,1]])
+            node.position += (specific + nonSpecific) * F_FACTOR
 
 
     def energy(self, positions=None):
@@ -346,23 +359,34 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
 
     def paintGL(self):
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        node = self.pattern.nodes[0]
+        gl.glPointSize(6.)
+        gl.glColor3f(1,1,1)
+        gl.glBegin(gl.GL_POINTS)
+        gl.glVertex2f(*node.position.pos)
+        gl.glEnd()
+        gl.glPointSize(2.)
+        r = 0.1
+        gl.glLineWidth(4)
         for node in self.pattern.nodes:
             gl.glBegin(gl.GL_POINTS)
             gl.glColor3f(1,1,1)
             gl.glVertex2f(*node.position.pos)
             gl.glEnd()
             gl.glBegin(gl.GL_LINES)
-            gl.glColor3f(1, 0, 0)
             for other in set(node.adjoins):
+                gl.glColor3f(r, 0, 0)
                 gl.glVertex2f(*node.position.pos)
                 gl.glVertex2f(*other.position.pos)
+                r *= 1.1
             gl.glEnd()
-        
+        gl.glLineWidth(2)
         gl.glBegin(gl.GL_LINES)
         for stitch in self.pattern.stitches:
             gl.glColor3f(0,0,1)
-            gl.glVertex2f(*stitch.root.position.pos)
-            gl.glVertex2f(*stitch.head.position.pos)
+            if stitch.root and stitch.head:
+                gl.glVertex2f(*stitch.root.position.pos)
+                gl.glVertex2f(*stitch.head.position.pos)
             gl.glColor3f(1, 0, 0)
         gl.glEnd()
 
