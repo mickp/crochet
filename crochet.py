@@ -23,31 +23,32 @@ F_FACTOR = 0.9
 
 def test():
     p = Pattern()
-    nChains = 6
-    nRounds = 2
+    nChains = 4
+    nRounds = 3
     for i in xrange(nChains):
         p.chain()
     mult = 2
     p.workInto(SlipStitch, 0)
-    start = p.lastWorked    
+    start = 0
     p.chain()
     p.chain()
-    joinAt = p.lastWorked
-    
-    for i in xrange(nRounds):
-        for j in xrange((mult-1) * nChains):
-            if j == 0:
-                p.workInto(DCStitch, start)
-            else:
-                p.workIntoNext(DCStitch)
-            for m in xrange(mult-1):
+    joinAt = p.lastWorked+1
+    for r in xrange(nRounds):
+        print "Round %d" % r
+        p.workInto(DCStitch, start)
+        for m in range(mult-1):
+            p.workIntoSame(DCStitch)
+        while p.lastWorked+p.direction != joinAt - 2:
+            p.workIntoNext(DCStitch)
+            for n in xrange(mult-1):
                 p.workIntoSame(DCStitch)
+
         p.workInto(SlipStitch, joinAt)
-        start = p.lastWorked
+        start = joinAt
         p.chain()
         p.chain()
-        joinAt = p.lastWorked
-        mult *= 2
+        joinAt = p.lastWorked+1
+        #mult += 1
 
     return p
 
@@ -138,12 +139,13 @@ class Node(object):
     def guessPosition(self):
         position = Vector(0,0)
         js = [j for j in self.adjoins if j.active]    
-        if len(js) == 1:
+        #if len(js) == 1:
+        if len(js) > 0:
             position = js[0].position + Vector(*[random.uniform(-1, 1) for i in [0,1]])
-        elif len(js) > 1:
-            for j in js:
-                position += j.position
-            position /= len(js)
+        #elif len(js) > 1:
+        #    for j in js:
+        #        position += j.position
+        #    position /= len(js)
         return position
 
 
@@ -344,7 +346,8 @@ class Pattern(object):
     def backward(self, n=1):
         lower = max(0, self.numActive-n)
         for node in self.nodes[lower:self.numActive]:
-            node.active = False
+            if self.nodes.index(node) >= lower:
+                node.active = False
         self.numActive = lower
 
 
