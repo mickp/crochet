@@ -413,8 +413,14 @@ class MyGLPlotWidget(glUtil.GLPlotWidget):
             self.pattern.forward(1)
         elif key in (QtCore.Qt.Key_Less, QtCore.Qt.Key_P):
             self.pattern.backward(1)
-        elif key in (QtCore.Qt.Key_R,):
-            pass
+        elif key in (QtCore.Qt.Key_W,):
+            self.pattern.nodes[self.pattern.numActive-1].position += Vector(0., 0.2)
+        elif key in (QtCore.Qt.Key_S,):
+            self.pattern.nodes[self.pattern.numActive-1].position += Vector(0., -.2)
+        elif key in (QtCore.Qt.Key_D,):
+            self.pattern.nodes[self.pattern.numActive-1].position += Vector(0.2, 0)
+        elif key in (QtCore.Qt.Key_A,):
+            self.pattern.nodes[self.pattern.numActive-1].position += Vector(-.2, 0)
         else:
             self.pattern.relax()
 
